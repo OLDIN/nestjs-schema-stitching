@@ -15,7 +15,6 @@ export class ConfigService {
   constructor(filePath: string) {
     const config: any = dotenv.parse(fs.readFileSync(filePath));
     this.envConfig = this.validateInput(config);
-    // console.log('this.envConfig = ', this.envConfig);
   }
 
   public get(key: string): any {

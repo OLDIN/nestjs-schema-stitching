@@ -8,9 +8,11 @@ import { AppService } from './app.service';
 import { resolve } from 'path';
 import { GqlConfigService } from './graphql.config/graphql.config.service';
 import { ConfigModule, ConfigService } from './config';
+import { CategoryModule } from './modules/category/Category.module';
 @Module({
   imports: [
     ConfigModule,
+    CategoryModule,
     GraphQLModule.forRootAsync({
       imports:[ConfigModule],
       useClass: GqlConfigService,

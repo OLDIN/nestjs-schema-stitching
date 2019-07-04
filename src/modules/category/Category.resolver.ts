@@ -1,27 +1,24 @@
-import { NotFoundException } from '@nestjs/common';
 import { NewCategoryInput } from './dto/new-category.input';
+import { Resolver, Mutation, Args, Query, ResolveProperty } from '@nestjs/graphql';
 import { Category } from './Category.entity';
-import { ResolveProperty, Resolver, Mutation, Args, Query } from '@nestjs/graphql';
 
-@Resolver('Category')
+@Resolver(of => Category)
 export class CategoryResolver {
-  constructor() {}
 
-  @Query('ping')
-  ping(): string {
-    return 'pong';
-  }
-
-  @ResolveProperty()
+  @Query(of => Category)
   category() {
     return [];
   }
 
-  @Mutation('createCategory')
+  @Mutation(of => Category)
   async createCategory(
     @Args('newCategoryData') newCategoryData: NewCategoryInput,
-  ): Promise<[]> {
-    return [];
+  ): Promise<Category> {
+    return {
+      id: 'sdf-sdf--sdf-sd-f-sdf',
+      name: 'Name test',
+      position: 0
+    };
   }
 
 }

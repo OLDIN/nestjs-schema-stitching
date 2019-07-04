@@ -8,13 +8,14 @@ import {
   transformSchema,
   FilterRootFields,
   mergeSchemas,
-  Transform
+  Transform,
+  introspectSchema
 } from 'graphql-tools';
 import { HttpLink } from 'apollo-link-http';
 import nodeFetch from 'node-fetch';
 import { split, from, NextLink, Observable, FetchResult, Operation } from 'apollo-link';
 import { getMainDefinition } from 'apollo-utilities';
-import { OperationTypeNode, buildSchema as buildSchemaGraphql, GraphQLSchema } from 'graphql';
+import { OperationTypeNode, buildSchema as buildSchemaGraphql, GraphQLSchema, printSchema } from 'graphql';
 import { setContext } from 'apollo-link-context';
 import { SubscriptionClient, ConnectionContext } from 'subscriptions-transport-ws';
 import * as moment from 'moment';
@@ -36,12 +37,14 @@ interface IContext {
 @Injectable()
 export class GqlConfigService implements GqlOptionsFactory {
 
+  private remoteLink: string = 'https://countries.trevorblades.com';
+
   constructor(
     private readonly config: ConfigService
   ) {}
 
   async createGqlOptions(): Promise<GqlModuleOptions> {
-    const remoteExecutableSchema = this.createRemoteSchema();
+    const remoteExecutableSchema = await this.createRemoteSchema();
 
     return {
       autoSchemaFile: 'schema.gql',
@@ -118,13 +121,15 @@ export class GqlConfigService implements GqlOptionsFactory {
     return subscriptionClient.request(operation);
   }
 
-  private createRemoteSchema(): GraphQLSchema & { transforms: Transform[]; } {
-    const hasuraSchema = readFileSync(join(__dirname, '../../generated/hasura-schema.gql'), 'utf8');
+  private async createRemoteSchema(): Promise<GraphQLSchema> {
+
     const httpLink = new HttpLink({
-      uri: this.config.get('HASURA_HTTP_URI'),
+      uri: this.remoteLink,
       fetch: nodeFetch as any,
     });
 
+    const remoteIntrospectedSchema = await introspectSchema(httpLink);
+    const remoteSchema = printSchema(remoteIntrospectedSchema);
     const link = split(
       ({ query }) => {
         const { kind, operation }: IDefinitionsParams = getMainDefinition(query);
@@ -142,21 +147,13 @@ export class GqlConfigService implements GqlOptionsFactory {
       return prevContext;
     });
 
-    const buildedHasuraSchema = buildSchemaGraphql(hasuraSchema);
+    const buildedHasuraSchema = buildSchemaGraphql(remoteSchema);
     const remoteExecutableSchema = makeRemoteExecutableSchema({
       link: from([contextLink, link]),
       schema: buildedHasuraSchema,
     });
 
-    const transformedSchema = transformSchema(
-      remoteExecutableSchema,
-      [
-        new FilterRootFields((operation) => {
-          return (operation === 'Mutation') ? false : true;
-        }),
-      ],
-    );
-    return transformedSchema;
+    return remoteExecutableSchema;
   }
 
 }
