@@ -54,7 +54,7 @@ export class GqlConfigService implements GqlOptionsFactory {
       debug: true,
       playground: {
         env: this.config.environment,
-        endpoint: '/',
+        endpoint: '/graphql',
         subscriptionEndpoint: '/subscriptions',
         settings: {
           'general.betaUpdates': false,
