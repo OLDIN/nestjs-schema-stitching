@@ -1,28 +1,28 @@
 import { Injectable } from '@nestjs/common';
 import { GqlOptionsFactory, GqlModuleOptions } from '@nestjs/graphql';
-import { buildSchemaSync as buildSchemaTypeGraphql, buildTypeDefsAndResolvers } from 'type-graphql';
-
 import { readFileSync } from 'fs';
 import * as ws from 'ws';
 import { join } from 'path';
-
 import {
   makeRemoteExecutableSchema,
   transformSchema,
   FilterRootFields,
   mergeSchemas,
-  makeExecutableSchema
+  Transform
 } from 'graphql-tools';
 import { HttpLink } from 'apollo-link-http';
 import nodeFetch from 'node-fetch';
-import { split, from } from 'apollo-link';
+import { split, from, NextLink, Observable, FetchResult, Operation } from 'apollo-link';
 import { getMainDefinition } from 'apollo-utilities';
-import { OperationTypeNode, buildSchema as buildSchemaGraphql } from 'graphql';
+import { OperationTypeNode, buildSchema as buildSchemaGraphql, GraphQLSchema } from 'graphql';
 import { setContext } from 'apollo-link-context';
 import { SubscriptionClient, ConnectionContext } from 'subscriptions-transport-ws';
-import { CategoryResolver } from '../modules/category/Category.resolver';
+import * as moment from 'moment';
+import { extend } from 'lodash';
 
-const hasuraSchema = readFileSync(join(__dirname, '../../generated', 'remote-schema.gql'), 'utf8');
+import { ConfigService } from '../config';
+
+declare const module: any;
 interface IDefinitionsParams {
   operation?: OperationTypeNode;
   kind: 'OperationDefinition' | 'FragmentDefinition';
@@ -32,80 +32,30 @@ interface IContext {
     subscriptionClient: SubscriptionClient,
   };
 }
-const wsLink = (operation: any, forward: any) => {
-  const context = operation.getContext();
-  const { graphqlContext: { subscriptionClient } }: IContext = context;
-  return subscriptionClient.request(operation);
-};
-
-const createRemoteSchema = () => {
-  const httpLink = new HttpLink({
-    uri: 'https://lucasconstantino.github.io/graphiql-online/',
-    fetch: nodeFetch as any,
-  });
-
-  const link = split(
-    ({ query }) => {
-      const { kind, operation }: IDefinitionsParams = getMainDefinition(query);
-      return kind === 'OperationDefinition' && operation === 'subscription';
-    },
-    wsLink as any,
-    httpLink,
-  );
-
-  const buildedHasuraSchema = buildSchemaGraphql(hasuraSchema);
-  const remoteExecutableSchema = makeRemoteExecutableSchema({
-    // link: from([contextLink, link]),
-    link,
-    schema: buildedHasuraSchema,
-  });
-
-  const transformedSchema = transformSchema(
-    remoteExecutableSchema,
-    [
-      new FilterRootFields((operation, fieldName) => {
-        return (operation === 'Mutation') ? false : true; //  && fieldName === 'password'
-      }),
-    ],
-  );
-  return transformedSchema;
-};
-
-async function generateLocalExecutableSchema() {
-  let typeDefs;
-  let resolvers;
-  try {
-    const res = await buildTypeDefsAndResolvers({
-      resolvers: [
-        CategoryResolver
-      ],
-      emitSchemaFile: true
-    });
-    console.log(res.typeDefs);
-    typeDefs = res.typeDefs;
-    resolvers = res.resolvers;
-  } catch (e) {
-    console.log('e = ', e);
-    throw new Error(e);
-  }
-  return makeExecutableSchema({ typeDefs, resolvers });
-}
 
 @Injectable()
 export class GqlConfigService implements GqlOptionsFactory {
+
+  constructor(
+    private readonly config: ConfigService
+  ) {}
+
   async createGqlOptions(): Promise<GqlModuleOptions> {
-    const localeExecutableSchema = await generateLocalExecutableSchema();
-    const schema = mergeSchemas({
-      schemas: [
-        createRemoteSchema(),
-        localeExecutableSchema
-      ]
-    });
+    const remoteExecutableSchema = this.createRemoteSchema();
+
     return {
-      schema,
+      autoSchemaFile: 'schema.gql',
+      transformSchema: async (schema: GraphQLSchema) => {
+        return mergeSchemas({
+          schemas: [
+            schema,
+            remoteExecutableSchema
+          ]
+        });
+      },
       debug: true,
       playground: {
-        env: 'development',
+        env: this.config.environment,
         endpoint: '/graphql',
         subscriptionEndpoint: '/subscriptions',
         settings: {
@@ -125,12 +75,11 @@ export class GqlConfigService implements GqlOptionsFactory {
       subscriptions: {
         path: '/subscriptions',
         keepAlive: 10000,
-        async onConnect(connectionParams, webSocket: any, context) {
-          // TODO: тут нужно передать id и роль hasura
-          const subscriptionClient = new SubscriptionClient('ws://lucasconstantino.github.io/graphiql-online/', {
+        onConnect: async (connectionParams, webSocket: any, context) => {
+          const subscriptionClient = new SubscriptionClient(this.config.get('HASURA_WS_URI'), {
             connectionParams: {
               ...connectionParams,
-              ...context.request.headers,
+              ...context.request.headers
             },
             reconnect: true,
             lazy: true,
@@ -149,14 +98,65 @@ export class GqlConfigService implements GqlOptionsFactory {
         },
       },
       context(context) {
-        const ctx = context.req || context.connection.context;
-        return {
-          ...context,
-          ...ctx,
-          req: context.req,
-          res: context.res
+        const contextModified: any = {
+          userRole: 'anonymous',
+          currentUTCTime: moment().utc().format()
         };
+
+        if (context && context.connection && context.connection.context) {
+          contextModified.subscriptionClient = context.connection.context.subscriptionClient;
+        }
+
+        return contextModified;
       },
     };
   }
+
+  private wsLink(operation: Operation, forward?: NextLink): Observable<FetchResult> | null {
+    const context = operation.getContext();
+    const { graphqlContext: { subscriptionClient } }: any = context;
+    return subscriptionClient.request(operation);
+  }
+
+  private createRemoteSchema(): GraphQLSchema & { transforms: Transform[]; } {
+    const hasuraSchema = readFileSync(join(__dirname, '../../generated/hasura-schema.gql'), 'utf8');
+    const httpLink = new HttpLink({
+      uri: this.config.get('HASURA_HTTP_URI'),
+      fetch: nodeFetch as any,
+    });
+
+    const link = split(
+      ({ query }) => {
+        const { kind, operation }: IDefinitionsParams = getMainDefinition(query);
+        return kind === 'OperationDefinition' && operation === 'subscription';
+      },
+      this.wsLink,
+      httpLink,
+    );
+
+    const contextLink = setContext((request, prevContext) => {
+      extend(prevContext.headers, {
+        'X-hasura-Role': prevContext.graphqlContext.userRole,
+        'X-Hasura-Utc-Time': prevContext.graphqlContext.currentUTCTime,
+      });
+      return prevContext;
+    });
+
+    const buildedHasuraSchema = buildSchemaGraphql(hasuraSchema);
+    const remoteExecutableSchema = makeRemoteExecutableSchema({
+      link: from([contextLink, link]),
+      schema: buildedHasuraSchema,
+    });
+
+    const transformedSchema = transformSchema(
+      remoteExecutableSchema,
+      [
+        new FilterRootFields((operation) => {
+          return (operation === 'Mutation') ? false : true;
+        }),
+      ],
+    );
+    return transformedSchema;
+  }
+
 }
