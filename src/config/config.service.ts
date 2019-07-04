@@ -30,6 +30,10 @@ export class ConfigService {
     return this.envConfig.NODE_ENV === 'development';
   }
 
+  public get environment(): IEnvConfig['NODE_ENV'] {
+    return this.envConfig.NODE_ENV;
+  }
+
   private validateInput(envConfig: IEnvConfig): IEnvConfig {
     const envVarsSchema: Joi.ObjectSchema = Joi.object({
       NODE_ENV: Joi.string()
