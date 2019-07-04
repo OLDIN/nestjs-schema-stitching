@@ -1,14 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { GqlOptionsFactory, GqlModuleOptions } from '@nestjs/graphql';
-import { readFileSync } from 'fs';
 import * as ws from 'ws';
-import { join } from 'path';
 import {
   makeRemoteExecutableSchema,
-  transformSchema,
-  FilterRootFields,
   mergeSchemas,
-  Transform,
   introspectSchema
 } from 'graphql-tools';
 import { HttpLink } from 'apollo-link-http';
@@ -59,7 +54,7 @@ export class GqlConfigService implements GqlOptionsFactory {
       debug: true,
       playground: {
         env: this.config.environment,
-        endpoint: '/graphql',
+        endpoint: '/',
         subscriptionEndpoint: '/subscriptions',
         settings: {
           'general.betaUpdates': false,
