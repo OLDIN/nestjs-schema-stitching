@@ -152,3 +152,4 @@ export class GqlConfigService implements GqlOptionsFactory {
   }
 
 }
+
